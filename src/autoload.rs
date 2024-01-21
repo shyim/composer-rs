@@ -1,7 +1,8 @@
 use anyhow::{Ok, Result};
 use askama::Template;
-use std::{path::PathBuf, collections::HashMap};
+use std::{collections::HashMap, path::PathBuf};
 
+use crate::classmap;
 use crate::lock;
 
 #[derive(Template)]
@@ -10,11 +11,10 @@ struct ComposerAutoload {
     hash: String,
 }
 
-
 #[derive(Template)]
 #[template(path = "autoload_real.html")]
 struct ComposerRealTemplate {
-    hash: String
+    hash: String,
 }
 
 #[derive(Template)]
@@ -25,6 +25,7 @@ struct ComposerStaticTemplate {
     psr0: HashMap<String, HashMap<String, HashMap<String, usize>>>,
     psr4: HashMap<String, Vec<String>>,
     psr4_prefix: HashMap<String, HashMap<String, usize>>,
+    classmap: HashMap<String, String>
 }
 
 #[derive(Template)]
@@ -78,7 +79,7 @@ async fn generate_main_autoload(lock: lock::ComposerLock, vendor_directory: Path
 
 async fn generate_composer_real(lock: lock::ComposerLock, vendor_directory: PathBuf) -> Result<()> {
     let template = ComposerRealTemplate {
-        hash: lock.content_hash
+        hash: lock.content_hash,
     };
     let rendered = template.render().unwrap();
 
@@ -91,11 +92,15 @@ async fn generate_composer_real(lock: lock::ComposerLock, vendor_directory: Path
     Ok(())
 }
 
-async fn generate_composer_static(lock: lock::ComposerLock, vendor_directory: PathBuf) -> Result<()> {
+async fn generate_composer_static(
+    lock: lock::ComposerLock,
+    vendor_directory: PathBuf,
+) -> Result<()> {
     let mut files = HashMap::new();
     let mut psr0: HashMap<String, HashMap<String, HashMap<String, usize>>> = HashMap::new();
     let mut psr4: HashMap<String, Vec<String>> = HashMap::new();
     let mut psr4_prefix: HashMap<String, HashMap<String, usize>> = HashMap::new();
+    let mut classmap: HashMap<String, String> = HashMap::new();
 
     for package in lock.packages {
         if package.autoload.is_some() {
@@ -103,7 +108,10 @@ async fn generate_composer_static(lock: lock::ComposerLock, vendor_directory: Pa
 
             if autoload.files.is_some() {
                 for file in autoload.files.unwrap() {
-                    files.insert(xxhash_rust::xxh3::xxh3_64(file.as_bytes()).to_string(), format!("{}/{}", package.name, file));
+                    files.insert(
+                        xxhash_rust::xxh3::xxh3_64(file.as_bytes()).to_string(),
+                        format!("{}/{}", package.name, file),
+                    );
                 }
             }
 
@@ -116,7 +124,10 @@ async fn generate_composer_static(lock: lock::ComposerLock, vendor_directory: Pa
                         let first_letter_map = psr0.get_mut(&first_letter.to_string()).unwrap();
 
                         if first_letter_map.contains_key(&namespace) {
-                            first_letter_map.get_mut(&namespace).unwrap().insert(path_to_directory, 1);
+                            first_letter_map
+                                .get_mut(&namespace)
+                                .unwrap()
+                                .insert(path_to_directory, 1);
                         } else {
                             let mut paths = HashMap::new();
                             paths.insert(path_to_directory, 1);
@@ -146,11 +157,30 @@ async fn generate_composer_static(lock: lock::ComposerLock, vendor_directory: Pa
                     }
 
                     if psr4_prefix.contains_key(&first_letter.to_string()) {
-                        psr4_prefix.get_mut(&first_letter.to_string()).unwrap().insert(namespace.clone(), namespace.len());
+                        psr4_prefix
+                            .get_mut(&first_letter.to_string())
+                            .unwrap()
+                            .insert(namespace.clone(), namespace.len());
                     } else {
                         let mut prefix = HashMap::new();
                         prefix.insert(namespace.clone(), namespace.len());
                         psr4_prefix.insert(first_letter.to_string(), prefix);
+                    }
+                }
+            }
+
+            if autoload.class_map.is_some() {
+                for classmap_path in autoload.class_map.unwrap() {
+                    let mut classmap_pkg = classmap::generate_classmap(
+                        vendor_directory.join(&package.name),
+                        classmap_path,
+                        autoload.exclude_from_class_map.clone().unwrap_or(vec![]),
+                    )
+                    .await
+                    .expect("Failed to generate classmap");
+
+                    for (class, file) in classmap_pkg.drain() {
+                        classmap.insert(class, format!("{}/{}", package.name, file));
                     }
                 }
             }
@@ -163,6 +193,7 @@ async fn generate_composer_static(lock: lock::ComposerLock, vendor_directory: Pa
         psr0: psr0,
         psr4: psr4,
         psr4_prefix: psr4_prefix,
+        classmap: classmap,
     };
     let rendered = template.render().unwrap();
 

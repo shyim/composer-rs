@@ -21,6 +21,10 @@ pub struct ComposerAutoload {
     pub psr0: Option<HashMap<String, String>>,
     #[serde(alias = "psr-4")]
     pub psr4: Option<HashMap<String, String>>,
+    #[serde(alias = "classmap")]
+    pub class_map: Option<Vec<String>>,
+    #[serde(alias = "exclude-from-classmap")]
+    pub exclude_from_class_map: Option<Vec<String>>,
 }
 
 #[derive(Deserialize, Clone)]

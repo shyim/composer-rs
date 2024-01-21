@@ -30,8 +30,8 @@ class ComposerStaticInit{{hash}}
         ),{% endfor %}
     );
 
-    public static $classMap = array (
-        '�' => __DIR__ . '/..' . '/symfony/cache/Traits/ValueWrapper.php',
+    public static $classMap = array ({% for map in classmap %}
+        '{{map.0|php_escape}}' => __DIR__ . '/..' . '/{{map.1}}',{% endfor %}
     );
 
     public static function getInitializer(ClassLoader $loader)

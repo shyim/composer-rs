@@ -9,6 +9,7 @@ use tokio::{fs::File, io::AsyncReadExt};
 
 mod autoload;
 mod lock;
+mod classmap;
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -68,6 +69,9 @@ async fn main() -> Result<()> {
             .await;
         }
         Some(Commands::ClearCache {}) => {
+            tokio::fs::remove_dir_all(cli.cache_directory.unwrap())
+                .await
+                .expect("failed to remove cache directory");
             println!("Clearing cache");
         }
         None => {
@@ -112,9 +116,16 @@ async fn install_from_composer_lock(
 
         println!("Installing {} in version {}", package.name, package.version);
 
+        if package.source.is_none() && package.dist.is_none() {
+            return Err(anyhow!(
+                "Package {} has no source or dist specified",
+                package.name
+            ));
+        }
+
         let handle = tokio::spawn(install_package(
             client.clone(),
-            package.dist.unwrap_or(package.source.unwrap()),
+            package.dist.unwrap_or_else(|| package.source.unwrap()),
             cache_directory.join(Path::new("archives")),
             working_directory
                 .join(Path::new("vendor"))
