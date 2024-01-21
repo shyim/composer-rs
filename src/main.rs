@@ -1,12 +1,14 @@
 use anyhow::anyhow;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use serde::Deserialize;
 use std::{
     io::Cursor,
     path::{Path, PathBuf},
 };
 use tokio::{fs::File, io::AsyncReadExt};
+
+mod autoload;
+mod lock;
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -26,29 +28,6 @@ struct Cli {
 enum Commands {
     Install {},
     ClearCache {},
-}
-
-#[derive(Deserialize, Clone)]
-struct ComposerPackageSource {
-    #[serde(alias = "type")]
-    source_type: String,
-    url: String,
-    reference: String,
-}
-
-#[derive(Deserialize)]
-struct ComposerPackage {
-    name: String,
-    version: String,
-    source: Option<ComposerPackageSource>,
-    dist: Option<ComposerPackageSource>,
-    #[serde(alias = "type")]
-    package_type: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct ComposerLock {
-    packages: Vec<ComposerPackage>,
 }
 
 #[tokio::main]
@@ -103,33 +82,26 @@ async fn install_from_composer_lock(
     working_directory: &Path,
     cache_directory: &Path,
 ) -> Result<()> {
-    let mut composer_lock = File::open(working_directory.join(Path::new("composer.lock")))
-        .await
-        .expect("failed to open composer.lock");
-
-    let mut buffer = Vec::new();
-    composer_lock
-        .read_to_end(&mut buffer)
-        .await
-        .expect("failed to read composer.lock");
-
-    let composer_lock: ComposerLock =
-        serde_json::from_slice(&buffer).expect("failed to parse composer.lock");
+    let composer_lock =
+        lock::load_composer_lock(working_directory.join(Path::new("composer.lock")))
+            .await
+            .expect("failed to load composer.lock");
 
     let cache_archive_directory = cache_directory.join("archives");
 
-        tokio::fs::create_dir_all(cache_archive_directory)
-            .await
-            .expect("failed to create cache directory");
+    tokio::fs::create_dir_all(cache_archive_directory)
+        .await
+        .expect("failed to create cache directory");
 
-    let mut handles = Vec::new();
+    let mut handles: Vec<tokio::task::JoinHandle<std::prelude::v1::Result<(), anyhow::Error>>> =
+        Vec::new();
 
     let client = reqwest::Client::builder()
         .user_agent("composer-rs")
         .build()
         .unwrap();
 
-    for package in composer_lock.packages {
+    for package in composer_lock.clone().packages {
         // Skip meta-packages, these are only virtual and should not be installed
         if package
             .package_type
@@ -161,12 +133,16 @@ async fn install_from_composer_lock(
         }
     }
 
+    autoload::generate_composer_autoload(composer_lock, working_directory.join(Path::new("vendor")))
+        .await
+        .expect("Failed to generate composer autoload");
+
     Ok(())
 }
 
 async fn install_package(
     client: reqwest::Client,
-    source: ComposerPackageSource,
+    source: lock::ComposerPackageSource,
     cache_directory: PathBuf,
     extract: PathBuf,
 ) -> Result<()> {
@@ -178,7 +154,7 @@ async fn install_package(
 
 async fn install_package_from_zip(
     client: reqwest::Client,
-    source: ComposerPackageSource,
+    source: lock::ComposerPackageSource,
     cache_directory: PathBuf,
     extract: PathBuf,
 ) -> Result<()> {

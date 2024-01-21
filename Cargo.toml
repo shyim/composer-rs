@@ -15,7 +15,9 @@ futures = "0.3.30"
 anyhow = "1.0.79"
 dirs = "5.0.1"
 zip-extract = "0.1.2"
-async_zip = { verison = "0.0.16", features = ["full"] }
+async_zip = { version = "0.0.16", features = ["full"] }
 sanitize-filename = "0.5.0"
 tokio-util = "0.7.10"
 futures-lite = "2.2.0"
+askama = "0.12.1"
+xxhash-rust = { version = "0.8.8", features = ["xxh3"]}
